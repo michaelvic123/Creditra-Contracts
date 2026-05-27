@@ -10,9 +10,13 @@
 //! These are global singleton values — one config per contract deployment.
 
 use crate::auth::require_admin_auth;
-use crate::events::{publish_risk_parameters_updated, RiskParametersUpdatedEvent};
-use crate::storage::{assert_not_paused, assert_ts_monotonic, rate_cfg_key, rate_formula_key};
-use crate::types::{ContractError, CreditLineData, CreditStatus, RateChangeConfig, RateFormulaConfig};
+use crate::events::publish_risk_parameters_updated;
+use crate::storage::{
+    assert_not_paused, assert_ts_monotonic, persist_credit_line, rate_cfg_key, rate_formula_key,
+};
+use crate::types::{
+    ContractError, CreditLineData, CreditStatus, RateChangeConfig, RateFormulaConfig,
+};
 use soroban_sdk::{Address, Env};
 
 /// Maximum interest rate in basis points (100%).
@@ -99,14 +103,15 @@ pub fn update_risk_parameters(
     assert_not_paused(&env);
     require_admin_auth(&env);
 
-    let mut credit_line: CreditLineData = env
+    let stored_line: CreditLineData = env
         .storage()
         .persistent()
         .get(&borrower)
         .unwrap_or_else(|| env.panic_with_error(ContractError::CreditLineNotFound));
+    let previous_utilized = stored_line.utilized_amount;
 
     // Apply interest accrual before any mutation
-    credit_line = crate::accrual::apply_accrual(&env, credit_line);
+    let mut credit_line = crate::accrual::apply_accrual(&env, stored_line);
 
     if credit_limit < 0 {
         env.panic_with_error(ContractError::NegativeLimit);
@@ -164,7 +169,9 @@ pub fn update_risk_parameters(
     // This prevents new draws but allows repayments.
     if credit_limit < credit_line.utilized_amount {
         credit_line.status = CreditStatus::Restricted;
-    } else if credit_line.status == CreditStatus::Restricted && credit_limit >= credit_line.utilized_amount {
+    } else if credit_line.status == CreditStatus::Restricted
+        && credit_limit >= credit_line.utilized_amount
+    {
         // Auto-cure: if previously Restricted and limit is now at or above utilization, return to Active.
         credit_line.status = CreditStatus::Active;
     }
@@ -173,7 +180,7 @@ pub fn update_risk_parameters(
 
     credit_line.credit_limit = credit_limit;
     credit_line.interest_rate_bps = effective_rate;
-    env.storage().persistent().set(&borrower, &credit_line);
+    persist_credit_line(&env, &borrower, &credit_line, previous_utilized);
 
     publish_risk_parameters_updated(&env, &borrower, credit_limit, effective_rate, risk_score);
 }
