@@ -12,10 +12,18 @@ mod amount_validation_tests;
 mod auth;
 mod borrow;
 mod config;
-mod events;
+pub mod events;
 mod freeze;
 mod lifecycle;
-pub mod math_utils;
+mod query;
+mod accrual;
+mod math_utils;
+mod risk;
+mod storage;
+pub mod types;
+use crate::storage::{DataKey, rate_cfg_key};
+use crate::auth::require_admin_auth;
+use crate::storage::{clear_reentrancy_guard, set_reentrancy_guard};
 mod risk;
 mod storage;
 pub mod types;
@@ -30,6 +38,7 @@ use crate::events::{
     publish_credit_line_event,
     publish_admin_rotation_accepted, publish_admin_rotation_proposed,
     publish_drawn_event, publish_interest_accrued_event, publish_repayment_event,
+    publish_borrower_blocked_event,
     AdminRotationAcceptedEvent, AdminRotationProposedEvent, CreditLineEvent, DrawnEvent,
     InterestAccruedEvent, RepaymentEvent,
 };
@@ -37,17 +46,25 @@ use crate::math_utils::{mul_div, Rounding};
 use crate::storage::{
     admin_key, assert_not_paused, clear_reentrancy_guard, proposed_admin_key, proposed_at_key,
     rate_cfg_key, set_reentrancy_guard, DataKey,
+    set_borrower_blocked as storage_set_borrower_blocked,
+    set_borrower_unblocked,
+    is_borrower_blocked as storage_is_borrower_blocked,
 };
 use crate::types::{ContractError, CreditLineData, CreditStatus, GracePeriodConfig, GraceWaiverMode, ProtocolConfig, RateChangeConfig};
 use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, Env, Symbol};
 
 pub const CONTRACT_API_VERSION: (u32, u32, u32) = (1, 0, 0);
 
+
 #[allow(dead_code)]
 const SECONDS_PER_YEAR: u64 = 31_536_000;
 
 #[allow(dead_code)]
 const SCHEMA_VERSION: u32 = 1;
+
+/// Maximum borrowers that can be blocked in a single `bulk_block_borrowers` call.
+/// Prevents unbounded gas consumption. Adjust after gas profiling.
+const BULK_BLOCK_MAX: u32 = 50;
 
 #[contract]
 pub struct Credit;
@@ -663,6 +680,55 @@ impl Credit {
         lifecycle::settle_default_liquidation(env, borrower, recovered_amount, settlement_id)
     }
 
+    // ── Borrower blocklist ────────────────────────────────────────────────────
+
+    /// Block a single borrower. Admin only. Idempotent.
+    ///
+    /// # Events
+    /// Emits `BorrowerBlockedEvent { blocked: true }`.
+    pub fn block_borrower(env: Env, admin: Address, borrower: Address) {
+        admin.require_auth();
+        require_admin_auth(&env);
+        storage_set_borrower_blocked(&env, &borrower);
+        publish_borrower_blocked_event(&env, &borrower, true);
+    }
+
+    /// Unblock a single borrower. Admin only. Idempotent.
+    ///
+    /// # Events
+    /// Emits `BorrowerBlockedEvent { blocked: false }`.
+    pub fn unblock_borrower(env: Env, admin: Address, borrower: Address) {
+        admin.require_auth();
+        require_admin_auth(&env);
+        set_borrower_unblocked(&env, &borrower);
+        publish_borrower_blocked_event(&env, &borrower, false);
+    }
+
+    /// Return true if `borrower` is currently on the blocklist.
+    /// Read-only; no auth required; no event emitted.
+    pub fn is_borrower_blocked(env: Env, borrower: Address) -> bool {
+        storage_is_borrower_blocked(&env, &borrower)
+    }
+
+    /// Block up to `BULK_BLOCK_MAX` borrowers in a single call. Admin only.
+    ///
+    /// # Panics
+    /// If `borrowers.len() > BULK_BLOCK_MAX`.
+    ///
+    /// # Events
+    /// Emits one `BorrowerBlockedEvent { blocked: true }` per borrower.
+    pub fn bulk_block_borrowers(env: Env, admin: Address, borrowers: soroban_sdk::Vec<Address>) {
+        admin.require_auth();
+        require_admin_auth(&env);
+        if borrowers.len() as u32 > BULK_BLOCK_MAX {
+            panic!("bulk_block_borrowers: exceeds max batch size of {}", BULK_BLOCK_MAX);
+        }
+        for borrower in borrowers.iter() {
+            storage_set_borrower_blocked(&env, &borrower);
+            publish_borrower_blocked_event(&env, &borrower, true);
+        }
+    }
+
     /// Return the credit line for `borrower`, or `None` if no line exists.
     ///
     /// No authentication required — this is a pure read with no side effects.
@@ -1256,6 +1322,12 @@ mod test_coverage {
         let (client, _admin, borrower) = base(&env);
         client.open_credit_line(&borrower, &500_i128, &300_u32, &70_u32);
     }
+
+#[cfg(test)]
+mod test_smoke_coverage {
+    use super::*;
+    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::token::{Client as TokenClient, StellarAssetClient};
 
     #[test]
     fn lifecycle_suspend_and_reinstate() {
