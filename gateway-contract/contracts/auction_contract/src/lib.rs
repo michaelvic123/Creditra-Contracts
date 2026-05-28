@@ -12,6 +12,28 @@ use events::{
 };
 use storage::{bump_auction_state_ttl, bump_settlement_marker_ttl};
 
+/// Returns the minimum bid that must be placed to outbid `highest_bid`.
+///
+/// increment = ceil(highest_bid * min_increment_bps / 10_000)
+///
+/// Ceiling is computed as `q / d + (q % d != 0)` to avoid the `q + (d-1)`
+/// addition that would overflow when q is near i128::MAX.
+///
+/// A floor of 1 stroop is applied so that a zero-bps config still requires
+/// a strictly higher bid, preventing equal-amount griefing.
+fn min_next_bid(highest_bid: i128, min_increment_bps: u32) -> i128 {
+    let bps = min_increment_bps as i128;
+    let product = highest_bid
+        .checked_mul(bps)
+        .expect("overflow in bid increment calculation");
+    let bps_increment = product / 10_000 + i128::from(product % 10_000 != 0);
+    // Always require at least +1 stroop even when bps == 0
+    let increment = bps_increment.max(1);
+    highest_bid
+        .checked_add(increment)
+        .expect("overflow computing minimum next bid threshold")
+}
+
 #[contract]
 pub struct Auction;
 
@@ -24,15 +46,27 @@ pub enum AuctionKey {
 
 #[contractimpl]
 impl Auction {
-    pub fn init_auction(env: Env, auction_id: Symbol, start_time: u64, end_time: u64, min_bid: i128) {
+    pub fn init_auction(
+        env: Env,
+        auction_id: Symbol,
+        start_time: u64,
+        end_time: u64,
+        min_bid: i128,
+        min_increment_bps: u32,
+    ) {
         if start_time >= end_time {
             panic!("invalid times");
+        }
+        // Cap at 100% (10_000 bps) — a requirement higher than that is nonsensical
+        if min_increment_bps > 10_000 {
+            panic!("min_increment_bps exceeds maximum of 10000 (100%)");
         }
         let config = AuctionConfig {
             username_hash: BytesN::from_array(&env, &[0; 32]),
             start_time,
             end_time,
             min_bid,
+            min_increment_bps,
         };
         let state = AuctionState {
             config,
@@ -90,8 +124,9 @@ impl Auction {
         }
 
         if let Some(prev_bidder) = state.highest_bidder {
-            if amount <= state.highest_bid {
-                panic!("bid must be higher than current highest bid");
+            let threshold = min_next_bid(state.highest_bid, state.config.min_increment_bps);
+            if amount < threshold {
+                panic!("bid below minimum increment threshold");
             }
 
             // Emit refund event before performing token transfer
@@ -180,10 +215,7 @@ impl Auction {
             panic!("auction not closed");
         }
 
-        let winner = state
-            .highest_bidder
-            .clone()
-            .unwrap_or_else(|| panic!("no winner"));
+        let winner = state.highest_bidder.clone().unwrap_or_else(|| panic!("no winner"));
         winner.require_auth();
 
         if state.status == AuctionStatus::Claimed {
