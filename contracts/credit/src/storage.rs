@@ -6,6 +6,12 @@ pub enum DataKey {
     LiquidityToken,
     LiquiditySource,
     MaxDrawAmount,
+    /// Per-borrower: tracks the timestamp of the last draw operation
+    LastDrawTs(Address),
+    /// Per-borrower: indicates whether a borrower is blocked from drawing
+    BlockedBorrower(Address),
+    /// Per-borrower: custom utilization cap in basis points for a specific borrower
+    UtilizationCapBps(Address),
 }
 
 pub fn admin_key(env: &Env) -> Symbol {
