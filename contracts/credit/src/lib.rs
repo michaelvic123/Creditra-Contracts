@@ -985,7 +985,7 @@ impl Credit {
         )
     }
 }
-
+}
 #[cfg(test)]
 mod test_rate_change_limits {
     use super::*;

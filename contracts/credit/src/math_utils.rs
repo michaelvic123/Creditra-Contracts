@@ -4,7 +4,127 @@
 
 #![warn(missing_docs)]
 
-/// Scaling factor used for fixed-point helpers.
+/// Multiply `value` by `numerator` then divide by `denominator`, using an
+/// intermediate `i128` accumulator to avoid overflow on typical inputs.
+///
+/// # Rounding
+/// Truncates toward zero (floor for positive results). No rounding-up variant
+/// is provided; callers that need ceiling arithmetic should add
+/// `denominator - 1` to `value * numerator` before calling.
+///
+/// # Parameters
+/// - `value`:       The base amount to scale.
+/// - `numerator`:   Scaling numerator (e.g. an interest rate).
+/// - `denominator`: Scaling denominator (e.g. 10_000 for basis-point math).
+///
+/// # Returns
+/// `(value * numerator) / denominator`, truncated toward zero.
+///
+/// # Panics
+/// - If `denominator` is zero (division by zero).
+/// - If the intermediate product `value * numerator` overflows `i128`
+///   (unlikely in practice; `i128` supports values up to ~1.7 × 10³⁸).
+///
+/// # Example
+/// ```
+/// // 1_000 * 300 / 10_000 = 30  (3% of 1_000)
+/// assert_eq!(mul_div(1_000, 300, 10_000), 30);
+/// ```
+// (Old, simpler i128 helpers removed in favor of the fixed-point, rounding-aware
+// implementations below.)
+
+/// Legacy i128 helpers retained for compatibility with existing code/tests.
+/// These mirror the previous simple implementations and preserve truncating
+/// behavior (toward zero).
+pub fn mul_div(value: i128, numerator: i128, denominator: i128) -> i128 {
+    assert!(denominator != 0, "mul_div: denominator must not be zero");
+    value
+        .checked_mul(numerator)
+        .expect("mul_div: intermediate product overflowed i128")
+        / denominator
+}
+
+// Ensure module-level braces are balanced.
+
+}
+
+/// Legacy apply_bps that operates on `i128` values and truncates toward zero.
+pub fn apply_bps(amount: i128, rate_bps: u32) -> i128 {
+    mul_div(amount, rate_bps as i128, 10_000)
+}
+
+/// Legacy prorate_interest using i128 arithmetic (365-day year).
+pub fn prorate_interest(principal: i128, rate_bps: u32, elapsed_secs: u64) -> i128 {
+    const SECONDS_PER_YEAR: i128 = 31_536_000;
+    const BPS_DENOMINATOR: i128 = 10_000;
+
+    if elapsed_secs == 0 || principal == 0 {
+        return 0;
+    }
+
+    let numerator = principal
+        .checked_mul(rate_bps as i128)
+        .expect("prorate_interest: principal * rate_bps overflowed i128")
+        .checked_mul(elapsed_secs as i128)
+        .expect("prorate_interest: product with elapsed_secs overflowed i128");
+
+    let denominator = BPS_DENOMINATOR
+        .checked_mul(SECONDS_PER_YEAR)
+        .expect("prorate_interest: denominator overflowed i128");
+
+    numerator / denominator
+}
+
+//! # Fixed-Point Interest Math Utilities
+//!
+//! This module provides deterministic, integer-only arithmetic helpers for
+//! computing interest accruals inside the Creditra credit contract.
+//!
+//! ## Scaling Factor
+//!
+//! All intermediate products are scaled by `SCALE = 10^18` before division so
+//! that the final result retains sub-unit precision up to 18 decimal places.
+//! The caller chooses whether the remainder is discarded (floor) or rounded up
+//! (ceiling) via the [`Rounding`] enum.
+//!
+//! ## Basis Points
+//!
+//! Interest rates are expressed in **basis points** (bps), where
+//! `1 bps = 0.01% = 1 / 10_000`.  The annual rate in bps is therefore divided
+//! by `BPS_DENOMINATOR = 10_000` when computing the fractional rate.
+//!
+//! ## Annual Seconds
+//!
+//! Time is measured in ledger seconds.  One Julian year is defined as
+//! `SECONDS_PER_YEAR = 31_557_600` (365.25 × 86 400), matching the convention
+//! used by most on-chain interest protocols.
+//!
+//! ## Overflow Safety
+//!
+//! The prorate helper promotes all operands to `u128` before multiplying.
+//! The worst-case intermediate product is:
+//!
+//! ```text
+//! principal  ≤ i128::MAX  ≈ 1.7 × 10^38
+//! rate_bps   ≤ 10_000
+//! time_delta ≤ u64::MAX   ≈ 1.8 × 10^19
+//! SCALE      = 10^18
+//! ```
+//!
+//! `principal × rate_bps × time_delta` can reach ~3 × 10^61, which overflows
+//! `u128` (max ~3.4 × 10^38).  To prevent this the multiplication is split
+//! into two checked steps:
+//!
+//! 1. `a = principal × rate_bps`  — fits in u128 for any realistic principal
+//!    (≤ 10^28 × 10^4 = 10^32 < 10^38).
+//! 2. `b = a × time_delta`        — checked; panics on overflow.
+//!
+//! The denominator `BPS_DENOMINATOR × SECONDS_PER_YEAR` is pre-computed as a
+//! `u128` constant so the final division is a single operation.
+
+#![allow(dead_code)]
+
+/// Scaling factor used for fixed-point intermediate arithmetic (10^18).
 pub const SCALE: u128 = 1_000_000_000_000_000_000_u128;
 
 /// Number of basis points in 100%.
