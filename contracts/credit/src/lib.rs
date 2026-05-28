@@ -24,6 +24,8 @@ pub mod types;
 #[cfg(test)]
 mod boundary_tests;
 #[cfg(test)]
+mod limit_decrease_tests;
+#[cfg(test)]
 mod risk_formula_tests;
 
 use crate::auth::require_admin_auth;
