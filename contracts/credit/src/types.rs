@@ -124,8 +124,8 @@ pub enum ContractError {
     RepayExceedsMaxAmount = 28,
     /// Borrower attempted to draw again before the cooldown interval elapsed.
     DrawCooldownActive = 29,
-    /// Treasury address is not configured when attempting a treasury withdrawal.
-    TreasuryNotSet = 30,
+    /// Collateral ratio would fall below the required minimum.
+    CollateralRatioBelowMinimum = 31, // added error variant
 }
 
 /// Stored credit line data for a borrower.
@@ -240,8 +240,6 @@ pub struct RateFormulaConfigEvent {
     pub enabled: bool,
 }
 
-<<<<<<< HEAD
-=======
 /// Global protocol configuration.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProtocolConfig {
@@ -250,4 +248,3 @@ pub struct ProtocolConfig {
     /// Configured liquidity source.
     pub liquidity_source: Option<Address>,
 }
->>>>>>> upstream/main
