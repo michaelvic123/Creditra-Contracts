@@ -35,6 +35,10 @@ pub enum DataKey {
     /// Per-borrower max utilization ratio cap in basis points (e.g. 8000 = 80%).
     /// When set, draw_credit enforces: utilized_amount <= credit_limit * cap_bps / 10_000.
     UtilizationCapBps(Address),
+    /// Original draw amount keyed by borrower and draw timestamp.
+    DrawAudit(Address, u64),
+    /// Total amount already reversed for a borrower and original draw timestamp.
+    DrawReversedAmount(Address, u64),
 }
 
 /// Maximum number of credit lines returned per page.

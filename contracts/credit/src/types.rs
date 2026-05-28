@@ -228,6 +228,8 @@ pub struct RateFormulaConfigEvent {
     pub enabled: bool,
 }
 
+<<<<<<< HEAD
+=======
 /// Global protocol configuration.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -239,3 +241,4 @@ pub struct ProtocolConfig {
     /// Configured rate change limits.
     pub rate_change_config: Option<RateChangeConfig>,
 }
+>>>>>>> upstream/main
