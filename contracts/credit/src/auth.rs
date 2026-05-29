@@ -21,12 +21,12 @@ use soroban_sdk::{Address, Env};
 ///   Production deployments must extend instance TTL regularly.
 ///
 /// # Panics
-/// Panics with "admin not set" if the admin key has never been initialized.
+/// Panics with `ContractError::AdminNotInitialized` if the admin key has never been initialized.
 pub fn require_admin(env: &Env) -> Address {
     env.storage()
         .instance()
         .get(&admin_key(env))
-        .expect("admin not set")
+        .unwrap_or_else(|| env.panic_with_error(crate::types::ContractError::AdminNotInitialized))
 }
 
 /// Require admin authorization for the current operation.

@@ -43,8 +43,11 @@ use crate::storage::{
     set_borrower_unblocked,
     is_borrower_blocked as storage_is_borrower_blocked,
     clear_repayment_schedule,
-    get_oracle_config, set_oracle_config, get_oracle_last_price, get_oracle_last_price_ts,
-    set_oracle_last_price,
+    get_credit_line as storage_get_credit_line,
+    get_last_draw_ts as storage_get_last_draw_ts,
+    set_last_draw_ts as storage_set_last_draw_ts,
+    get_utilization_cap_bps as storage_get_utilization_cap_bps,
+    set_utilization_cap_bps as storage_set_utilization_cap_bps,
 };
 use crate::types::{
     ContractError, CreditLineData, CreditStatus, GracePeriodConfig, GraceWaiverMode,

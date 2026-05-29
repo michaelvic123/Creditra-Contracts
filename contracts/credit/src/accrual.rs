@@ -171,8 +171,13 @@ pub fn apply_accrual(env: &Env, mut line: CreditLineData) -> CreditLineData {
             ),
         }
     } else {
-        let seconds = (now - accrual_start) as i128;
-        compute_interest(utilized, full_rate, seconds).unwrap_or_else(|e| env.panic_with_error(e))
+        // Active, Defaulted, Restricted, or Closed status: apply full rate.
+        prorate_interest(
+            line.utilized_amount as u128,
+            line.interest_rate_bps,
+            (now - accrual_start) as u64,
+            Rounding::Floor,
+        )
     };
 
     let accrued_i: i128 = u128_to_i128(accrued_u);

@@ -293,7 +293,7 @@ pub fn close_credit_line(env: Env, borrower: Address, closer: Address) {
         .storage()
         .persistent()
         .get(&borrower)
-        .expect("Credit line not found");
+        .unwrap_or_else(|| env.panic_with_error(ContractError::CreditLineNotFound));
     let previous_utilized = credit_line.utilized_amount;
 
     // Idempotent: already closed → nothing to do.
@@ -455,7 +455,7 @@ pub fn settle_default_liquidation(
         .storage()
         .persistent()
         .get(&borrower)
-        .expect("Credit line not found");
+        .unwrap_or_else(|| env.panic_with_error(ContractError::CreditLineNotFound));
     let previous_utilized = stored_line.utilized_amount;
 
     // Apply interest accrual before any mutation
@@ -472,7 +472,7 @@ pub fn settle_default_liquidation(
     credit_line.utilized_amount = credit_line
         .utilized_amount
         .checked_sub(recovered_amount)
-        .expect("overflow while applying liquidation settlement");
+        .unwrap_or_else(|| env.panic_with_error(ContractError::Overflow));
 
     if credit_line.utilized_amount == 0 {
         credit_line.status = CreditStatus::Closed;
