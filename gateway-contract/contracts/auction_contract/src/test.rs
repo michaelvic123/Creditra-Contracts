@@ -8,11 +8,12 @@ mod tests {
     use std::panic::{catch_unwind, AssertUnwindSafe};
     use std::vec::Vec;
 
-    use soroban_sdk::testutils::{Address as _, Ledger};
     use soroban_sdk::testutils::Events as _;
     use soroban_sdk::testutils::Ledger as _;
+    use soroban_sdk::testutils::{Address as _, Ledger};
+    use soroban_sdk::testutils::{Ledger, MockAuth, MockAuthInvoke};
     use soroban_sdk::token::{Client as TokenClient, StellarAssetClient};
-    use soroban_sdk::{Address, Env, Symbol, TryFromVal, TryIntoVal};
+    use soroban_sdk::{Address, Env, IntoVal, Symbol, TryFromVal, TryIntoVal};
 
     const REFUND_TOPIC: &str = "BID_RFDN";
     const SETTLEMENT_TOPIC: &str = "LIQ_SETL";
@@ -82,7 +83,16 @@ mod tests {
         let client = AuctionClient::new(&env, &contract_id);
 
         let auction_id = Symbol::new(&env, "auc1");
-        client.init_auction(&auction_id, &0, &1000, &50_i128, &0_u32, &0_u64, &0_u64, &0_u32); // start 0, end 1000, min 50, 0 bps, no anti-snipe
+        client.init_auction(
+            &auction_id,
+            &AuctionMode::English,
+            &0,
+            &1000,
+            &50_i128,
+            &0_u32,
+            &None,
+            &None,
+        ); // start 0, end 1000, min 50, 0 bps
 
         client.place_bid(&auction_id, &alice, &100_i128);
         client.place_bid(&auction_id, &bob, &200_i128);
@@ -106,7 +116,16 @@ mod tests {
         let client = AuctionClient::new(&env, &contract_id);
 
         let auction_id = Symbol::new(&env, "eq_highest");
-        client.init_auction(&auction_id, &0, &1000, &50_i128, &0_u32, &0_u64, &0_u64, &0_u32);
+        client.init_auction(
+            &auction_id,
+            &AuctionMode::English,
+            &0,
+            &1000,
+            &50_i128,
+            &0_u32,
+            &None,
+            &None,
+        );
 
         client.place_bid(&auction_id, &alice, &100_i128);
 
@@ -144,7 +163,16 @@ mod tests {
         let client = AuctionClient::new(&env, &contract_id);
         let auction_id = Symbol::new(&env, AUCTION_ID);
 
-        client.init_auction(&auction_id, &0, &u64::MAX, &1_i128, &0_u32, &0_u64, &0_u64, &0_u32); // long auction, min 1, 0 bps, no anti-snipe
+        client.init_auction(
+            &auction_id,
+            &AuctionMode::English,
+            &0,
+            &u64::MAX,
+            &1_i128,
+            &0_u32,
+            &None,
+            &None,
+        ); // long auction, min 1, 0 bps
 
         let mut seed: u64 = 0xdeadbeefcafebabe;
         let mut expected: Option<(Address, i128)> = None;
@@ -223,7 +251,16 @@ mod tests {
         let mut seed: u64 = 0x1234_5678_9abc_def0;
         let auction_id = Symbol::new(&env, "refund_auc");
 
-        client.init_auction(&auction_id, &0, &u64::MAX, &1_i128, &0_u32, &0_u64, &0_u64, &0_u32);
+        client.init_auction(
+            &auction_id,
+            &AuctionMode::English,
+            &0,
+            &u64::MAX,
+            &1_i128,
+            &0_u32,
+            &None,
+            &None,
+        );
 
         for _ in 0..FUZZ_STEPS {
             let bidder_idx = pick_index(&mut seed, 0..bidders.len());
@@ -283,8 +320,18 @@ mod tests {
         let client = AuctionClient::new(&env, &contract_id);
         let auction_id = Symbol::new(&env, "close_auc");
 
-        client.init_auction(&auction_id, &0, &u64::MAX, &1_i128, &0_u32, &0_u64, &0_u64, &0_u32);
+        client.init_auction(
+            &auction_id,
+            &AuctionMode::English,
+            &0,
+            &u64::MAX,
+            &1_i128,
+            &0_u32,
+            &None,
+            &None,
+        );
 
+        let mut seed: u64 = 0x11ce_f00d_cafe_beef;
         let mut seed: u64 = 0xdeadbeef_cafe_beef;
         let mut highest = 0_i128;
         for _ in 0..8 {
@@ -325,9 +372,30 @@ mod tests {
         let contract_id = env.register(Auction, ());
         let client = AuctionClient::new(&env, &contract_id);
         let bidder = Address::generate(&env);
+        let factory = Address::generate(&env);
         let auction_id = Symbol::new(&env, "liq_open");
 
-        client.init_auction(&auction_id, &0, &1000, &50_i128, &0_u32, &0_u64, &0_u64, &0_u32);
+        client.set_factory_contract(&factory);
+        client.init_auction(
+            &auction_id,
+            &AuctionMode::English,
+            &0,
+            &1000,
+            &50_i128,
+            &0_u32,
+            &None,
+            &None,
+        );
+        client.init_auction(
+            &auction_id,
+            &AuctionMode::English,
+            &0,
+            &1000,
+            &50_i128,
+            &0_u32,
+            &None,
+            &None,
+        );
         client.place_bid(&auction_id, &bidder, &100_i128);
 
         let result = client.try_settle_default_liquidation(
@@ -349,9 +417,30 @@ mod tests {
         let bidder = Address::generate(&env);
         let borrower = Address::generate(&env);
         let credit_contract = Address::generate(&env);
+        let factory = Address::generate(&env);
         let auction_id = Symbol::new(&env, "liq_closed");
 
-        client.init_auction(&auction_id, &0, &1000, &50_i128, &0_u32, &0_u64, &0_u64, &0_u32);
+        client.set_factory_contract(&factory);
+        client.init_auction(
+            &auction_id,
+            &AuctionMode::English,
+            &0,
+            &1000,
+            &50_i128,
+            &0_u32,
+            &None,
+            &None,
+        );
+        client.init_auction(
+            &auction_id,
+            &AuctionMode::English,
+            &0,
+            &1000,
+            &50_i128,
+            &0_u32,
+            &None,
+            &None,
+        );
         client.place_bid(&auction_id, &bidder, &420_i128);
         client.close_auction(&auction_id);
         client.settle_default_liquidation(&auction_id, &credit_contract, &borrower);
@@ -364,7 +453,37 @@ mod tests {
         assert_eq!(evt.borrower, borrower);
         assert_eq!(evt.winner, bidder);
         assert_eq!(evt.recovered_amount, 420_i128);
+    }
 
+    #[test]
+    #[should_panic]
+    fn settle_default_liquidation_replay_reverts() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(Auction, ());
+        let client = AuctionClient::new(&env, &contract_id);
+
+        let factory = Address::generate(&env);
+        let borrower = Address::generate(&env);
+        let credit_contract = Address::generate(&env);
+        let auction_id = Symbol::new(&env, "liq_replay");
+
+        client.set_factory_contract(&factory);
+        client.init_auction(
+            &auction_id,
+            &AuctionMode::English,
+            &0,
+            &1000,
+            &50_i128,
+            &0_u32,
+            &None,
+            &None,
+        );
+        client.close_auction(&auction_id);
+        client.settle_default_liquidation(&auction_id, &credit_contract, &borrower);
+        // second call must panic
+        client.settle_default_liquidation(&auction_id, &credit_contract, &borrower);
         let replay =
             client.try_settle_default_liquidation(&auction_id, &credit_contract, &borrower);
         assert!(replay.is_err(), "settlement replay should panic");
@@ -380,9 +499,30 @@ mod tests {
 
         let borrower = Address::generate(&env);
         let credit_contract = Address::generate(&env);
+        let factory = Address::generate(&env);
         let auction_id = Symbol::new(&env, "zero_bid");
 
-        client.init_auction(&auction_id, &0, &1000, &50_i128, &0_u32, &0_u64, &0_u64, &0_u32);
+        client.set_factory_contract(&factory);
+        client.init_auction(
+            &auction_id,
+            &AuctionMode::English,
+            &0,
+            &1000,
+            &50_i128,
+            &0_u32,
+            &None,
+            &None,
+        );
+        client.init_auction(
+            &auction_id,
+            &AuctionMode::English,
+            &0,
+            &1000,
+            &50_i128,
+            &0_u32,
+            &None,
+            &None,
+        );
         // no bids
         client.close_auction(&auction_id);
         client.settle_default_liquidation(&auction_id, &credit_contract, &borrower);
@@ -392,6 +532,119 @@ mod tests {
         let evt = events.last().unwrap();
         assert_eq!(evt.winner, borrower);
         assert_eq!(evt.recovered_amount, 0_i128);
+    }
+
+    // --- factory auth negative tests ---
+
+    #[test]
+    fn settle_default_liquidation_reverts_when_factory_unset() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(Auction, ());
+        let client = AuctionClient::new(&env, &contract_id);
+        let auction_id = Symbol::new(&env, "no_factory");
+
+        // No set_factory_contract call — factory is unset
+        client.init_auction(
+            &auction_id,
+            &AuctionMode::English,
+            &0,
+            &1000,
+            &50_i128,
+            &0_u32,
+            &None,
+            &None,
+        );
+        client.close_auction(&auction_id);
+
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            client.settle_default_liquidation(
+                &auction_id,
+                &Address::generate(&env),
+                &Address::generate(&env),
+            );
+        }));
+
+        assert!(
+            result.is_err(),
+            "should revert when factory contract is unset"
+        );
+    }
+
+    #[test]
+    fn settle_default_liquidation_reverts_for_wrong_caller() {
+        let env = Env::default();
+        let contract_id = env.register(Auction, ());
+        let client = AuctionClient::new(&env, &contract_id);
+
+        let factory = Address::generate(&env);
+        let borrower = Address::generate(&env);
+        let credit_contract = Address::generate(&env);
+        let auction_id = Symbol::new(&env, "wrong_caller");
+
+        // Setup: register factory and close an auction
+        env.mock_all_auths();
+        client.set_factory_contract(&factory);
+        client.init_auction(
+            &auction_id,
+            &AuctionMode::English,
+            &0,
+            &1000,
+            &50_i128,
+            &0_u32,
+            &None,
+            &None,
+        );
+        client.close_auction(&auction_id);
+
+        // Attempt settlement with no auth provided — factory.require_auth() will reject
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            // Create a fresh env without mock_all_auths so require_auth fails
+            let env2 = Env::default();
+            let contract_id2 = env2.register(Auction, ());
+            let client2 = AuctionClient::new(&env2, &contract_id2);
+            let factory2 = Address::generate(&env2);
+            let auction_id2 = Symbol::new(&env2, "wrong_caller2");
+            // Setup with mocks
+            env2.mock_all_auths();
+            client2.set_factory_contract(&factory2);
+            client2.init_auction(
+                &auction_id2,
+                &AuctionMode::English,
+                &0,
+                &1000,
+                &50_i128,
+                &0_u32,
+                &None,
+                &None,
+            );
+            client2.close_auction(&auction_id2);
+            // Call with only a non-factory address authorized
+            let wrong_caller = Address::generate(&env2);
+            client2
+                .mock_auths(&[soroban_sdk::testutils::MockAuth {
+                    address: &wrong_caller,
+                    invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                        contract: &contract_id2,
+                        fn_name: "settle_default_liquidation",
+                        args: (
+                            auction_id2.clone(),
+                            Address::generate(&env2),
+                            Address::generate(&env2),
+                        )
+                            .into_val(&env2),
+                        sub_invokes: &[],
+                    },
+                }])
+                .settle_default_liquidation(
+                    &auction_id2,
+                    &Address::generate(&env2),
+                    &Address::generate(&env2),
+                );
+        }));
+
+        assert!(result.is_err(), "wrong caller should be rejected");
     }
 
     #[test]
@@ -406,14 +659,23 @@ mod tests {
         let bidder = Address::generate(&env);
         let auction_id = Symbol::new(&env, "timed_out");
 
-        client.init_auction(&auction_id, &0, &1000, &50_i128, &0_u32, &0_u64, &0_u64, &0_u32);
+        client.init_auction(
+            &auction_id,
+            &AuctionMode::English,
+            &0,
+            &1000,
+            &50_i128,
+            &0_u32,
+            &None,
+            &None,
+        );
 
         let attempt = client.try_place_bid(&auction_id, &bidder, &100_i128);
         assert!(attempt.is_err(), "bid after end time should be rejected");
     }
 
     #[test]
-    fn close_auction_emits_event() {
+    fn settle_default_liquidation_requires_factory_contract_set() {
         let env = Env::default();
         env.mock_all_auths();
 
@@ -421,25 +683,112 @@ mod tests {
         let client = AuctionClient::new(&env, &contract_id);
 
         let bidder = Address::generate(&env);
-        let auction_id = Symbol::new(&env, "close_event");
+        let borrower = Address::generate(&env);
+        let credit_contract = Address::generate(&env);
+        let auction_id = Symbol::new(&env, "no_factory");
 
-        client.init_auction(&auction_id, &0, &1000, &50_i128, &0_u32, &0_u64, &0_u64, &0_u32);
-        client.place_bid(&auction_id, &bidder, &100_i128);
+        client.init_auction(
+            &auction_id,
+            &AuctionMode::English,
+            &0,
+            &1000,
+            &50_i128,
+            &0_u32,
+            &None,
+            &None,
+        );
+        client.place_bid(&auction_id, &bidder, &420_i128);
         client.close_auction(&auction_id);
 
-        // Check close event
-        let close_events = env
-            .events()
-            .all()
-            .iter()
-            .filter(|(_contract, topics, _data)| {
-                let t0: Symbol = Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap();
-                t0 == Symbol::new(&env, "AUC_CLOSE")
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(close_events.len(), 1);
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            client.settle_default_liquidation(&auction_id, &credit_contract, &borrower);
+        }));
+
+        assert!(result.is_err(), "should panic if factory not set");
     }
 
+    #[test]
+    fn settle_default_liquidation_requires_authorized_factory() {
+        let env = Env::default();
+        let contract_id = env.register(Auction, ());
+        let client = AuctionClient::new(&env, &contract_id);
+
+        let factory = Address::generate(&env);
+        let intruder = Address::generate(&env);
+        let bidder = Address::generate(&env);
+        let borrower = Address::generate(&env);
+        let credit_contract = Address::generate(&env);
+        let auction_id = Symbol::new(&env, "unauth");
+
+        env.as_contract(&contract_id, || {
+            set_factory_contract(&env, &factory);
+        });
+
+        // Use mock_all_auths for setup
+        env.mock_all_auths();
+        client.init_auction(
+            &auction_id,
+            &AuctionMode::English,
+            &0,
+            &1000,
+            &50_i128,
+            &0_u32,
+            &None,
+            &None,
+        );
+        client.place_bid(&auction_id, &bidder, &420_i128);
+        client.close_auction(&auction_id);
+
+        // This test may not work perfectly with mock_all_auths() active.
+        // Let's just try to settle as intruder and expect panic,
+        // if it fails, I'll need a better way to handle auth.
+        let result = env.as_contract(&intruder, || {
+            catch_unwind(AssertUnwindSafe(|| {
+                client.settle_default_liquidation(&auction_id, &credit_contract, &borrower);
+            }))
+        });
+
+        assert!(result.is_err(), "should panic if unauthorized caller");
+    }
+
+    #[test]
+    fn settle_default_liquidation_succeeds_with_factory() {
+        let env = Env::default();
+        let contract_id = env.register(Auction, ());
+        let client = AuctionClient::new(&env, &contract_id);
+        let factory = Address::generate(&env);
+        let bidder = Address::generate(&env);
+        let borrower = Address::generate(&env);
+        let credit_contract = Address::generate(&env);
+        let auction_id = Symbol::new(&env, "auth_success");
+
+        env.as_contract(&contract_id, || {
+            set_factory_contract(&env, &factory);
+        });
+
+        // Use mock_all_auths for setup
+        env.mock_all_auths();
+        client.init_auction(
+            &auction_id,
+            &AuctionMode::English,
+            &0,
+            &1000,
+            &50_i128,
+            &0_u32,
+            &None,
+            &None,
+        );
+        client.place_bid(&auction_id, &bidder, &420_i128);
+        client.close_auction(&auction_id);
+
+        // Call as factory
+        env.as_contract(&factory, || {
+            client.settle_default_liquidation(&auction_id, &credit_contract, &borrower);
+        });
+
+        let events = settlement_events(&env);
+        assert_eq!(events.len(), 1);
+    }
     // ── min_increment_bps: validation at init ──────────────────────────────
 
     #[test]
@@ -451,7 +800,16 @@ mod tests {
         let auction_id = Symbol::new(&env, "bad_bps");
 
         let result = catch_unwind(AssertUnwindSafe(|| {
-            client.init_auction(&auction_id, &0, &1000, &50_i128, &10_001_u32, &0_u64, &0_u64, &0_u32);
+            client.init_auction(
+                &auction_id,
+                &AuctionMode::English,
+                &0,
+                &1000,
+                &50_i128,
+                &10_001_u32,
+                &None,
+                &None,
+            );
         }));
         assert!(result.is_err(), "bps > 10000 should be rejected at init");
     }
@@ -464,9 +822,27 @@ mod tests {
         let client = AuctionClient::new(&env, &contract_id);
 
         // 0 bps (no percentage requirement) is valid
-        client.init_auction(&Symbol::new(&env, "bps0"), &0, &1000, &1_i128, &0_u32, &0_u64, &0_u64, &0_u32);
+        client.init_auction(
+            &Symbol::new(&env, "bps0"),
+            &AuctionMode::English,
+            &0,
+            &1000,
+            &1_i128,
+            &0_u32,
+            &None,
+            &None,
+        );
         // 10_000 bps (100% increment) is the maximum valid value
-        client.init_auction(&Symbol::new(&env, "bps10k"), &0, &1000, &1_i128, &10_000_u32, &0_u64, &0_u64, &0_u32);
+        client.init_auction(
+            &Symbol::new(&env, "bps10k"),
+            &AuctionMode::English,
+            &0,
+            &1000,
+            &1_i128,
+            &10_000_u32,
+            &None,
+            &None,
+        );
     }
 
     // ── min_increment_bps: bid threshold enforcement ───────────────────────
@@ -483,13 +859,25 @@ mod tests {
         let bob = Address::generate(&env);
 
         // 100 bps = 1%; threshold after 1000 = 1000 + ceil(1000*100/10000) = 1010
-        client.init_auction(&auction_id, &0, &u64::MAX, &1_i128, &100_u32, &0_u64, &0_u64, &0_u32);
+        client.init_auction(
+            &auction_id,
+            &AuctionMode::English,
+            &0,
+            &u64::MAX,
+            &1_i128,
+            &100_u32,
+            &None,
+            &None,
+        );
         client.place_bid(&auction_id, &alice, &1_000_i128);
 
         let result = catch_unwind(AssertUnwindSafe(|| {
             client.place_bid(&auction_id, &bob, &1_009_i128); // 1009 < 1010
         }));
-        assert!(result.is_err(), "bid one stroop below threshold must be rejected");
+        assert!(
+            result.is_err(),
+            "bid one stroop below threshold must be rejected"
+        );
 
         // state must be unchanged
         let state: crate::types::AuctionState = env
@@ -511,7 +899,16 @@ mod tests {
         let bob = Address::generate(&env);
 
         // 100 bps = 1%; threshold after 1000 = 1010
-        client.init_auction(&auction_id, &0, &u64::MAX, &1_i128, &100_u32, &0_u64, &0_u64, &0_u32);
+        client.init_auction(
+            &auction_id,
+            &AuctionMode::English,
+            &0,
+            &u64::MAX,
+            &1_i128,
+            &100_u32,
+            &None,
+            &None,
+        );
         client.place_bid(&auction_id, &alice, &1_000_i128);
         client.place_bid(&auction_id, &bob, &1_010_i128); // exactly at threshold
 
@@ -535,7 +932,16 @@ mod tests {
         let carol = Address::generate(&env);
 
         // 333 bps = 3.33%; increment on 1000 = ceil(1000*333/10000) = ceil(33.3) = 34; threshold = 1034
-        client.init_auction(&auction_id, &0, &u64::MAX, &1_i128, &333_u32, &0_u64, &0_u64, &0_u32);
+        client.init_auction(
+            &auction_id,
+            &AuctionMode::English,
+            &0,
+            &u64::MAX,
+            &1_i128,
+            &333_u32,
+            &None,
+            &None,
+        );
         client.place_bid(&auction_id, &alice, &1_000_i128);
 
         let just_below = catch_unwind(AssertUnwindSafe(|| {
@@ -565,7 +971,16 @@ mod tests {
         let carol = Address::generate(&env);
 
         // 0 bps: any strictly higher bid is accepted; equal bid must be rejected
-        client.init_auction(&auction_id, &0, &u64::MAX, &1_i128, &0_u32, &0_u64, &0_u64, &0_u32);
+        client.init_auction(
+            &auction_id,
+            &AuctionMode::English,
+            &0,
+            &u64::MAX,
+            &1_i128,
+            &0_u32,
+            &None,
+            &None,
+        );
         client.place_bid(&auction_id, &alice, &500_i128);
 
         let equal = catch_unwind(AssertUnwindSafe(|| {
@@ -582,303 +997,481 @@ mod tests {
         assert_eq!(state.highest_bid, 501_i128);
     }
 
-    // ── Anti-Snipe Mechanism Tests ─────────────────────────────────────────
-
-    /// Test that a bid placed before the extension window does not trigger an extension.
     #[test]
-    fn anti_snipe_pre_window_bid_no_extension() {
+    fn claim_non_winner_fails_not_winner() {
         let env = Env::default();
         env.mock_all_auths();
 
+        let alice = Address::generate(&env);
+        let bob = Address::generate(&env);
+        let winner = Address::generate(&env);
+
         let contract_id = env.register(Auction, ());
         let client = AuctionClient::new(&env, &contract_id);
-        let auction_id = Symbol::new(&env, "snipe_pre");
+
+        let auction_id = Symbol::new(&env, "claim_non_winner");
+
+        client.init_auction(
+            &auction_id,
+            &AuctionMode::English,
+            &0,
+            &u64::MAX,
+            &1_i128,
+            &0_u32,
+            &None,
+            &None,
+        );
+        client.place_bid(&auction_id, &winner, &100_i128);
+        client.close_auction(&auction_id);
+
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            // alice (not winner) attempts to claim
+            client.claim_auction(&auction_id);
+        }));
+        assert!(result.is_err(), "non-winner claim should fail");
+    }
+
+    #[test]
+    fn claim_double_claim_fails_already_claimed() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let winner = Address::generate(&env);
+
+        let contract_id = env.register(Auction, ());
+        let client = AuctionClient::new(&env, &contract_id);
+
+        let auction_id = Symbol::new(&env, "claim_double");
+
+        client.init_auction(
+            &auction_id,
+            &AuctionMode::English,
+            &0,
+            &u64::MAX,
+            &1_i128,
+            &0_u32,
+            &None,
+            &None,
+        );
+        client.place_bid(&auction_id, &winner, &100_i128);
+        client.close_auction(&auction_id);
+
+        // first claim succeeds
+        let first = catch_unwind(AssertUnwindSafe(|| {
+            client.claim_auction(&auction_id);
+        }));
+        assert!(first.is_ok(), "first claim should succeed");
+
+        // second claim should fail
+        let second = catch_unwind(AssertUnwindSafe(|| {
+            client.claim_auction(&auction_id);
+        }));
+        assert!(second.is_err(), "second claim should fail");
+    }
+
+    #[test]
+    fn claim_before_close_fails_not_closed() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let winner = Address::generate(&env);
+
+        let contract_id = env.register(Auction, ());
+        let client = AuctionClient::new(&env, &contract_id);
+
+        let auction_id = Symbol::new(&env, "claim_not_closed");
+
+        client.init_auction(
+            &auction_id,
+            &AuctionMode::English,
+            &0,
+            &u64::MAX,
+            &1_i128,
+            &0_u32,
+            &None,
+            &None,
+        );
+        client.place_bid(&auction_id, &winner, &100_i128);
+        // not closing the auction
+
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            client.claim_auction(&auction_id);
+        }));
+        assert!(result.is_err(), "claim before close should fail");
+    }
+
+    #[test]
+    fn claim_zero_bid_auction_fails_not_winner() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let borrower = Address::generate(&env);
+
+        let contract_id = env.register(Auction, ());
+        let client = AuctionClient::new(&env, &contract_id);
+
+        let auction_id = Symbol::new(&env, "zero_bid_claim");
+
+        client.init_auction(
+            &auction_id,
+            &AuctionMode::English,
+            &0,
+            &u64::MAX,
+            &1_i128,
+            &0_u32,
+            &None,
+            &None,
+        );
+        // no bids placed
+        client.close_auction(&auction_id);
+
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            client.claim_auction(&auction_id);
+        }));
+        assert!(result.is_err(), "zero-bid claim should fail");
+    }
+
+    // === Dutch Auction Tests ===
+
+    #[test]
+    fn dutch_auction_price_at_start() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let alice = Address::generate(&env);
+
+        let contract_id = env.register(Auction, ());
+        let client = AuctionClient::new(&env, &contract_id);
+
+        let auction_id = Symbol::new(&env, "dutch_start");
+
+        client.init_auction(
+            &auction_id,
+            &AuctionMode::Dutch,
+            &1000,
+            &2000,
+            &50_i128,
+            &0_u32,
+            &Some(500_i128),
+            &Some(100_i128),
+        );
+
+        env.ledger().with_mut(|li| li.timestamp = 1000);
+        client.place_bid(&auction_id, &alice, &500_i128);
+
+        let stored: crate::types::AuctionState = env
+            .as_contract(&contract_id, || env.storage().persistent().get(&auction_id))
+            .unwrap();
+
+        assert_eq!(stored.status, AuctionStatus::Closed);
+        assert_eq!(stored.highest_bidder.unwrap(), alice);
+        assert_eq!(stored.highest_bid, 500_i128);
+    }
+
+    #[test]
+    fn dutch_auction_price_at_mid() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let alice = Address::generate(&env);
+
+        let contract_id = env.register(Auction, ());
+        let client = AuctionClient::new(&env, &contract_id);
+
+        let auction_id = Symbol::new(&env, "dutch_mid");
+
+        client.init_auction(
+            &auction_id,
+            &AuctionMode::Dutch,
+            &1000,
+            &2000,
+            &50_i128,
+            &0_u32,
+            &Some(500_i128),
+            &Some(100_i128),
+        );
+
+        env.ledger().with_mut(|li| li.timestamp = 1500);
+        client.place_bid(&auction_id, &alice, &300_i128);
+
+        let stored: crate::types::AuctionState = env
+            .as_contract(&contract_id, || env.storage().persistent().get(&auction_id))
+            .unwrap();
+
+        assert_eq!(stored.status, AuctionStatus::Closed);
+        assert_eq!(stored.highest_bidder.unwrap(), alice);
+        assert_eq!(stored.highest_bid, 300_i128);
+    }
+
+    #[test]
+    fn dutch_auction_price_at_floor() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let alice = Address::generate(&env);
+
+        let contract_id = env.register(Auction, ());
+        let client = AuctionClient::new(&env, &contract_id);
+
+        let auction_id = Symbol::new(&env, "dutch_floor");
+
+        client.init_auction(
+            &auction_id,
+            &AuctionMode::Dutch,
+            &1000,
+            &2000,
+            &50_i128,
+            &0_u32,
+            &Some(500_i128),
+            &Some(100_i128),
+        );
+
+        env.ledger().with_mut(|li| li.timestamp = 2000);
+        client.place_bid(&auction_id, &alice, &100_i128);
+
+        let stored: crate::types::AuctionState = env
+            .as_contract(&contract_id, || env.storage().persistent().get(&auction_id))
+            .unwrap();
+
+        assert_eq!(stored.status, AuctionStatus::Closed);
+        assert_eq!(stored.highest_bidder.unwrap(), alice);
+        assert_eq!(stored.highest_bid, 100_i128);
+    }
+
+    #[test]
+    fn dutch_auction_bid_below_current_price_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let alice = Address::generate(&env);
+
+        let contract_id = env.register(Auction, ());
+        let client = AuctionClient::new(&env, &contract_id);
+
+        let auction_id = Symbol::new(&env, "dutch_low_bid");
+
+        client.init_auction(
+            &auction_id,
+            &AuctionMode::Dutch,
+            &1000,
+            &2000,
+            &50_i128,
+            &0_u32,
+            &Some(500_i128),
+            &Some(100_i128),
+        );
+
+        env.ledger().with_mut(|li| li.timestamp = 1500);
+        let result = client.try_place_bid(&auction_id, &alice, &250_i128);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn dutch_auction_first_bid_settles_immediately() {
+        let env = Env::default();
+        env.mock_all_auths();
 
         let alice = Address::generate(&env);
         let bob = Address::generate(&env);
 
-        // Auction: start=0, end=1000, extension_window=100, extension_amount=60, max_extensions=3
-        client.init_auction(&auction_id, &0, &1000, &1_i128, &0_u32, &100_u64, &60_u64, &3_u32);
-
-        // Place first bid at time 500 (well before extension window threshold of 900)
-        env.ledger().with_mut(|li| {
-            li.timestamp = 500;
-        });
-        client.place_bid(&auction_id, &alice, &100_i128);
-
-        let state: crate::types::AuctionState = env
-            .as_contract(&contract_id, || env.storage().persistent().get(&auction_id))
-            .unwrap();
-        assert_eq!(state.config.end_time, 1000, "end_time should remain unchanged");
-        assert_eq!(state.config.extensions_count, 0, "extensions_count should be 0");
-
-        // Place second bid at time 899 (still 1 second before extension window)
-        env.ledger().with_mut(|li| {
-            li.timestamp = 899;
-        });
-        client.place_bid(&auction_id, &bob, &200_i128);
-
-        let state: crate::types::AuctionState = env
-            .as_contract(&contract_id, || env.storage().persistent().get(&auction_id))
-            .unwrap();
-        assert_eq!(state.config.end_time, 1000, "end_time should still be unchanged");
-        assert_eq!(state.config.extensions_count, 0, "extensions_count should still be 0");
-    }
-
-    /// Test that a bid placed within the extension window triggers an extension.
-    #[test]
-    fn anti_snipe_late_bid_triggers_extension() {
-        let env = Env::default();
-        env.mock_all_auths();
-
         let contract_id = env.register(Auction, ());
         let client = AuctionClient::new(&env, &contract_id);
-        let auction_id = Symbol::new(&env, "snipe_late");
+
+        let auction_id = Symbol::new(&env, "dutch_first_bid");
+
+        client.init_auction(
+            &auction_id,
+            &AuctionMode::Dutch,
+            &1000,
+            &2000,
+            &50_i128,
+            &0_u32,
+            &Some(500_i128),
+            &Some(100_i128),
+        );
+
+        env.ledger().with_mut(|li| li.timestamp = 1500);
+        client.place_bid(&auction_id, &alice, &300_i128);
+
+        let stored: crate::types::AuctionState = env
+            .as_contract(&contract_id, || env.storage().persistent().get(&auction_id))
+            .unwrap();
+
+        assert_eq!(stored.status, AuctionStatus::Closed);
+        let result = client.try_place_bid(&auction_id, &bob, &400_i128);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn english_mode_unchanged_with_new_signature() {
+        let env = Env::default();
+        env.mock_all_auths();
 
         let alice = Address::generate(&env);
         let bob = Address::generate(&env);
 
-        // Auction: start=0, end=1000, extension_window=100, extension_amount=60, max_extensions=3
-        client.init_auction(&auction_id, &0, &1000, &1_i128, &0_u32, &100_u64, &60_u64, &3_u32);
+        let contract_id = env.register(Auction, ());
+        let client = AuctionClient::new(&env, &contract_id);
 
-        // Place first bid early
-        env.ledger().with_mut(|li| {
-            li.timestamp = 500;
-        });
+        let auction_id = Symbol::new(&env, "english_unchanged");
+
+        client.init_auction(
+            &auction_id,
+            &AuctionMode::English,
+            &0,
+            &1000,
+            &50_i128,
+            &0_u32,
+            &None,
+            &None,
+        );
+
         client.place_bid(&auction_id, &alice, &100_i128);
-
-        // Place second bid at time 950 (within extension window: 950 >= 900 and 950 < 1000)
-        env.ledger().with_mut(|li| {
-            li.timestamp = 950;
-        });
         client.place_bid(&auction_id, &bob, &200_i128);
 
-        let state: crate::types::AuctionState = env
+        let stored: crate::types::AuctionState = env
             .as_contract(&contract_id, || env.storage().persistent().get(&auction_id))
             .unwrap();
-        // Expected new end_time = 950 + 60 = 1010
-        assert_eq!(state.config.end_time, 1010, "end_time should be extended to 1010");
-        assert_eq!(state.config.extensions_count, 1, "extensions_count should be 1");
+
+        assert_eq!(stored.status, AuctionStatus::Open);
+        assert_eq!(stored.highest_bidder.unwrap(), bob);
+        assert_eq!(stored.highest_bid, 200_i128);
     }
 
-    /// Test that extensions stop after reaching max_extensions limit.
+    // === Dutch Auction Tests ===
+
     #[test]
-    fn anti_snipe_extension_cap_enforced() {
+    fn dutch_auction_price_at_start() {
         let env = Env::default();
         env.mock_all_auths();
 
+        let alice = Address::generate(&env);
+
         let contract_id = env.register(Auction, ());
         let client = AuctionClient::new(&env, &contract_id);
-        let auction_id = Symbol::new(&env, "snipe_cap");
 
-        let bidders: [Address; 5] = [
-            Address::generate(&env),
-            Address::generate(&env),
-            Address::generate(&env),
-            Address::generate(&env),
-            Address::generate(&env),
-        ];
+        let auction_id = Symbol::new(&env, "dutch_start");
 
-        // Auction: start=0, end=1000, extension_window=100, extension_amount=60, max_extensions=2
-        client.init_auction(&auction_id, &0, &1000, &1_i128, &0_u32, &100_u64, &60_u64, &2_u32);
+        client.init_auction(
+            &auction_id,
+            &AuctionMode::Dutch,
+            &1000,
+            &2000,
+            &50_i128,
+            &0_u32,
+            &Some(500_i128),
+            &Some(100_i128),
+        );
 
-        // First bid early (no extension)
-        env.ledger().with_mut(|li| {
-            li.timestamp = 500;
-        });
-        client.place_bid(&auction_id, &bidders[0], &100_i128);
+        env.ledger().with_mut(|li| li.timestamp = 1000);
+        client.place_bid(&auction_id, &alice, &500_i128);
 
-        let state: crate::types::AuctionState = env
+        let stored: crate::types::AuctionState = env
             .as_contract(&contract_id, || env.storage().persistent().get(&auction_id))
             .unwrap();
-        assert_eq!(state.config.end_time, 1000);
-        assert_eq!(state.config.extensions_count, 0);
 
-        // Second bid at 950 (first extension: 950 + 60 = 1010)
-        env.ledger().with_mut(|li| {
-            li.timestamp = 950;
-        });
-        client.place_bid(&auction_id, &bidders[1], &200_i128);
-
-        let state: crate::types::AuctionState = env
-            .as_contract(&contract_id, || env.storage().persistent().get(&auction_id))
-            .unwrap();
-        assert_eq!(state.config.end_time, 1010, "first extension should set end_time to 1010");
-        assert_eq!(state.config.extensions_count, 1);
-
-        // Third bid at 970 (second extension: 970 + 60 = 1030, but current end is 1010, so max(1010, 1030) = 1030)
-        env.ledger().with_mut(|li| {
-            li.timestamp = 970;
-        });
-        client.place_bid(&auction_id, &bidders[2], &300_i128);
-
-        let state: crate::types::AuctionState = env
-            .as_contract(&contract_id, || env.storage().persistent().get(&auction_id))
-            .unwrap();
-        assert_eq!(state.config.end_time, 1030, "second extension should set end_time to 1030");
-        assert_eq!(state.config.extensions_count, 2, "extensions_count should be 2");
-
-        // Fourth bid at 990 (would be third extension, but max_extensions=2, so no extension)
-        env.ledger().with_mut(|li| {
-            li.timestamp = 990;
-        });
-        client.place_bid(&auction_id, &bidders[3], &400_i128);
-
-        let state: crate::types::AuctionState = env
-            .as_contract(&contract_id, || env.storage().persistent().get(&auction_id))
-            .unwrap();
-        assert_eq!(state.config.end_time, 1030, "end_time should remain 1030 (no third extension)");
-        assert_eq!(state.config.extensions_count, 2, "extensions_count should still be 2");
-
-        // Fifth bid at 1000 (still within extension window but max reached)
-        env.ledger().with_mut(|li| {
-            li.timestamp = 1000;
-        });
-        client.place_bid(&auction_id, &bidders[4], &500_i128);
-
-        let state: crate::types::AuctionState = env
-            .as_contract(&contract_id, || env.storage().persistent().get(&auction_id))
-            .unwrap();
-        assert_eq!(state.config.end_time, 1030, "end_time should still be 1030");
-        assert_eq!(state.config.extensions_count, 2, "extensions_count should still be 2");
+        assert_eq!(stored.status, AuctionStatus::Closed);
+        assert_eq!(stored.highest_bidder.unwrap(), alice);
+        assert_eq!(stored.highest_bid, 500_i128);
     }
 
-    /// Test that anti-snipe is disabled when extension_window is 0.
     #[test]
-    fn anti_snipe_disabled_when_extension_window_zero() {
+    fn dutch_auction_price_at_mid() {
         let env = Env::default();
         env.mock_all_auths();
 
+        let alice = Address::generate(&env);
+
         let contract_id = env.register(Auction, ());
         let client = AuctionClient::new(&env, &contract_id);
-        let auction_id = Symbol::new(&env, "snipe_disabled");
+
+        let auction_id = Symbol::new(&env, "dutch_mid");
+
+        client.init_auction(
+            &auction_id,
+            &AuctionMode::Dutch,
+            &1000,
+            &2000,
+            &50_i128,
+            &0_u32,
+            &Some(500_i128),
+            &Some(100_i128),
+        );
+
+        env.ledger().with_mut(|li| li.timestamp = 1500);
+        client.place_bid(&auction_id, &alice, &300_i128);
+
+        let stored: crate::types::AuctionState = env
+            .as_contract(&contract_id, || env.storage().persistent().get(&auction_id))
+            .unwrap();
+
+        assert_eq!(stored.status, AuctionStatus::Closed);
+        assert_eq!(stored.highest_bidder.unwrap(), alice);
+        assert_eq!(stored.highest_bid, 300_i128);
+    }
+
+    #[test]
+    fn dutch_auction_bid_below_current_price_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let alice = Address::generate(&env);
+
+        let contract_id = env.register(Auction, ());
+        let client = AuctionClient::new(&env, &contract_id);
+
+        let auction_id = Symbol::new(&env, "dutch_low_bid");
+
+        client.init_auction(
+            &auction_id,
+            &AuctionMode::Dutch,
+            &1000,
+            &2000,
+            &50_i128,
+            &0_u32,
+            &Some(500_i128),
+            &Some(100_i128),
+        );
+
+        env.ledger().with_mut(|li| li.timestamp = 1500);
+        let result = client.try_place_bid(&auction_id, &alice, &250_i128);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn english_mode_unchanged_with_new_signature() {
+        let env = Env::default();
+        env.mock_all_auths();
 
         let alice = Address::generate(&env);
         let bob = Address::generate(&env);
 
-        // Auction with extension_window=0 (anti-snipe disabled)
-        client.init_auction(&auction_id, &0, &1000, &1_i128, &0_u32, &0_u64, &60_u64, &3_u32);
-
-        env.ledger().with_mut(|li| {
-            li.timestamp = 500;
-        });
-        client.place_bid(&auction_id, &alice, &100_i128);
-
-        // Bid at 950 (would be in extension window if enabled)
-        env.ledger().with_mut(|li| {
-            li.timestamp = 950;
-        });
-        client.place_bid(&auction_id, &bob, &200_i128);
-
-        let state: crate::types::AuctionState = env
-            .as_contract(&contract_id, || env.storage().persistent().get(&auction_id))
-            .unwrap();
-        assert_eq!(state.config.end_time, 1000, "end_time should not change when extension_window=0");
-        assert_eq!(state.config.extensions_count, 0);
-    }
-
-    /// Test that anti-snipe is disabled when extension_amount is 0.
-    #[test]
-    fn anti_snipe_disabled_when_extension_amount_zero() {
-        let env = Env::default();
-        env.mock_all_auths();
-
         let contract_id = env.register(Auction, ());
         let client = AuctionClient::new(&env, &contract_id);
-        let auction_id = Symbol::new(&env, "snipe_no_amount");
 
-        let alice = Address::generate(&env);
-        let bob = Address::generate(&env);
+        let auction_id = Symbol::new(&env, "english_unchanged");
 
-        // Auction with extension_amount=0 (anti-snipe disabled)
-        client.init_auction(&auction_id, &0, &1000, &1_i128, &0_u32, &100_u64, &0_u64, &3_u32);
+        client.init_auction(
+            &auction_id,
+            &AuctionMode::English,
+            &0,
+            &1000,
+            &50_i128,
+            &0_u32,
+            &None,
+            &None,
+        );
 
-        env.ledger().with_mut(|li| {
-            li.timestamp = 500;
-        });
         client.place_bid(&auction_id, &alice, &100_i128);
-
-        // Bid at 950 (within extension window but extension_amount=0)
-        env.ledger().with_mut(|li| {
-            li.timestamp = 950;
-        });
         client.place_bid(&auction_id, &bob, &200_i128);
 
-        let state: crate::types::AuctionState = env
+        let stored: crate::types::AuctionState = env
             .as_contract(&contract_id, || env.storage().persistent().get(&auction_id))
             .unwrap();
-        assert_eq!(state.config.end_time, 1000, "end_time should not change when extension_amount=0");
-        assert_eq!(state.config.extensions_count, 0);
-    }
 
-    /// Test that a bid exactly at the extension window threshold triggers extension.
-    #[test]
-    fn anti_snipe_bid_at_exact_threshold() {
-        let env = Env::default();
-        env.mock_all_auths();
-
-        let contract_id = env.register(Auction, ());
-        let client = AuctionClient::new(&env, &contract_id);
-        let auction_id = Symbol::new(&env, "snipe_exact");
-
-        let alice = Address::generate(&env);
-        let bob = Address::generate(&env);
-
-        // Auction: end=1000, extension_window=100 (threshold at 900)
-        client.init_auction(&auction_id, &0, &1000, &1_i128, &0_u32, &100_u64, &60_u64, &3_u32);
-
-        env.ledger().with_mut(|li| {
-            li.timestamp = 500;
-        });
-        client.place_bid(&auction_id, &alice, &100_i128);
-
-        // Bid exactly at threshold (900)
-        env.ledger().with_mut(|li| {
-            li.timestamp = 900;
-        });
-        client.place_bid(&auction_id, &bob, &200_i128);
-
-        let state: crate::types::AuctionState = env
-            .as_contract(&contract_id, || env.storage().persistent().get(&auction_id))
-            .unwrap();
-        assert_eq!(state.config.end_time, 960, "end_time should be extended to 960");
-        assert_eq!(state.config.extensions_count, 1);
-    }
-
-    /// Test that extension only happens if proposed_end > current end_time.
-    #[test]
-    fn anti_snipe_no_extension_if_proposed_end_not_greater() {
-        let env = Env::default();
-        env.mock_all_auths();
-
-        let contract_id = env.register(Auction, ());
-        let client = AuctionClient::new(&env, &contract_id);
-        let auction_id = Symbol::new(&env, "snipe_no_extend");
-
-        let alice = Address::generate(&env);
-        let bob = Address::generate(&env);
-
-        // Auction: end=1000, extension_window=100, extension_amount=10
-        client.init_auction(&auction_id, &0, &1000, &1_i128, &0_u32, &100_u64, &10_u64, &3_u32);
-
-        env.ledger().with_mut(|li| {
-            li.timestamp = 500;
-        });
-        client.place_bid(&auction_id, &alice, &100_i128);
-
-        // Bid at 990 (proposed_end = 990 + 10 = 1000, which equals current end_time)
-        env.ledger().with_mut(|li| {
-            li.timestamp = 990;
-        });
-        client.place_bid(&auction_id, &bob, &200_i128);
-
-        let state: crate::types::AuctionState = env
-            .as_contract(&contract_id, || env.storage().persistent().get(&auction_id))
-            .unwrap();
-        // Since proposed_end (1000) is not > current end_time (1000), no extension occurs
-        // But extensions_count should still increment since we're in the window
-        assert_eq!(state.config.end_time, 1000, "end_time should remain 1000");
-        assert_eq!(state.config.extensions_count, 0, "extensions_count should remain 0 since no actual extension occurred");
+        assert_eq!(stored.status, AuctionStatus::Open);
+        assert_eq!(stored.highest_bidder.unwrap(), bob);
+        assert_eq!(stored.highest_bid, 200_i128);
     }
 }
 

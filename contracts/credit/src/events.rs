@@ -249,3 +249,29 @@ pub fn publish_borrower_blocked_event(env: &Env, borrower: &Address, blocked: bo
         },
     );
 }
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CollateralDepositedEvent {
+    pub borrower: Address,
+    pub amount: i128,
+    pub new_balance: i128,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CollateralWithdrawnEvent {
+    pub borrower: Address,
+    pub amount: i128,
+    pub new_balance: i128,
+}
+
+pub fn publish_collateral_deposited_event(env: &Env, event: CollateralDepositedEvent) {
+    env.events()
+        .publish((symbol_short!("credit"), symbol_short!("col_dep")), event);
+}
+
+pub fn publish_collateral_withdrawn_event(env: &Env, event: CollateralWithdrawnEvent) {
+    env.events()
+        .publish((symbol_short!("credit"), symbol_short!("col_wit")), event);
+}

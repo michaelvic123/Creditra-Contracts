@@ -14,7 +14,7 @@ mod borrow;
 mod config;
 pub mod events;
 mod freeze;
-mod lifecycle;
+mod collateral;
 mod query;
 mod math_utils;
 mod risk;
@@ -32,8 +32,9 @@ use crate::events::{
     publish_borrower_blocked_event, publish_credit_line_event, publish_drawn_event,
     publish_interest_accrued_event, publish_repayment_event, CreditLineEvent, DrawnEvent,
     InterestAccruedEvent, RepaymentEvent,
+    publish_oracle_config_set_event, publish_oracle_price_accepted_event,
 };
-use crate::math_utils::{mul_div, Rounding};
+use crate::math_utils::{mul_div, Rounding, compute_deviation_bps};
 use crate::storage::{
     admin_key, assert_not_paused, clear_reentrancy_guard, proposed_admin_key, proposed_at_key,
     rate_cfg_key, set_reentrancy_guard, DataKey, persist_credit_line,
@@ -50,7 +51,7 @@ use crate::storage::{
 };
 use crate::types::{
     ContractError, CreditLineData, CreditStatus, GracePeriodConfig, GraceWaiverMode,
-    RateChangeConfig,
+    OracleConfig, RateChangeConfig,
 };
 use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, Env, Symbol, Vec};
 
@@ -73,6 +74,16 @@ const BULK_BLOCK_MAX: u32 = 50;
 /// Maximum borrowers that can be processed in a single keeper accrual batch.
 /// Keeps the entrypoint within Soroban resource limits.
 const ACCRUE_BATCH_MAX: u32 = 50;
+
+#[soroban_sdk::contractclient(name = "AuctionClient")]
+pub trait Auction {
+    fn settle_default_liquidation(
+        env: soroban_sdk::Env,
+        auction_id: soroban_sdk::Symbol,
+        credit_contract: soroban_sdk::Address,
+        borrower: soroban_sdk::Address,
+    ) -> i128;
+}
 
 #[contract]
 pub struct Credit;
@@ -318,6 +329,22 @@ impl Credit {
             env.panic_with_error(ContractError::OverLimit);
         }
 
+        // Enforce minimum collateral ratio
+        let min_ratio_bps = crate::storage::get_min_collateral_ratio_bps(&env).unwrap_or(15000);
+        let current_collateral = crate::storage::get_collateral_balance(&env, &borrower);
+        let required_collateral = (updated_utilized as i128)
+            .checked_mul(min_ratio_bps as i128)
+            .unwrap_or_else(|| {
+                clear_reentrancy_guard(&env);
+                env.panic_with_error(ContractError::Overflow)
+            })
+            / 10_000;
+
+        if current_collateral < required_collateral {
+            clear_reentrancy_guard(&env);
+            env.panic_with_error(ContractError::CollateralRatioBelowMinimum);
+        }
+
         // Enforce per-borrower utilization cap if configured.
         if let Some(cap_bps) = storage_get_utilization_cap_bps(&env, &borrower) {
             let credit_limit_u128 = u128::try_from(credit_line.credit_limit).unwrap_or_else(|_| {
@@ -545,6 +572,16 @@ impl Credit {
         risk::set_rate_change_limits(env, max_rate_change_bps, rate_change_min_interval)
     }
 
+    /// Set a per-borrower interest rate floor (admin only).
+    pub fn set_borrower_rate_floor(env: Env, borrower: Address, floor_bps: Option<u32>) {
+        risk::set_borrower_rate_floor(env, borrower, floor_bps)
+    }
+
+    /// Get the interest rate floor for a borrower, if set.
+    pub fn get_borrower_rate_floor(env: Env, borrower: Address) -> Option<u32> {
+        storage::get_borrower_rate_floor(&env, &borrower)
+    }
+
     pub fn get_rate_change_limits(env: Env) -> Option<RateChangeConfig> {
         env.storage().instance().get(&rate_cfg_key(&env))
     }
@@ -755,6 +792,18 @@ impl Credit {
         crate::storage::get_total_utilized(&env)
     }
 
+    pub fn deposit_collateral(env: Env, borrower: Address, amount: i128) {
+        crate::collateral::deposit_collateral(&env, &borrower, amount);
+    }
+
+    pub fn withdraw_collateral(env: Env, borrower: Address, amount: i128) {
+        crate::collateral::withdraw_collateral(&env, &borrower, amount);
+    }
+
+    pub fn get_collateral(env: Env, borrower: Address) -> i128 {
+        crate::collateral::get_collateral(&env, &borrower)
+    }
+
     /// Set the maximum total utilization allowed across all credit lines (admin only).
     ///
     /// Once set, `draw_credit` reverts with [`ContractError::ExposureCapExceeded`] if
@@ -882,13 +931,135 @@ impl Credit {
         lifecycle::reinstate_credit_line(env, borrower, target_status)
     }
 
+    /// Apply auction liquidation proceeds to a defaulted credit line (admin only).
+    ///
+    /// This is accounting-only: no token transfer occurs here. Off-chain
+    /// orchestration must ensure auction proceeds are in protocol custody
+    /// before invoking this function.
+    ///
+    /// # Reentrancy
+    /// Protected by the contract-wide reentrancy guard to prevent cross-contract
+    /// callback attacks during settlement.
     pub fn settle_default_liquidation(
         env: Env,
         borrower: Address,
         recovered_amount: i128,
         settlement_id: Symbol,
+        oracle_price: Option<i128>,
     ) {
-        lifecycle::settle_default_liquidation(env, borrower, recovered_amount, settlement_id)
+        // Reentrancy guard: settlement touches accounting and may interact
+        // with an external auction contract, so we guard the full path.
+        set_reentrancy_guard(&env);
+
+        // Oracle price-feed circuit breaker: validate price before settlement.
+        if let Some(cfg) = crate::storage::get_oracle_config(&env) {
+            let price = oracle_price.unwrap_or_else(|| {
+                clear_reentrancy_guard(&env);
+                env.panic_with_error(ContractError::OraclePriceInvalid)
+            });
+
+            if price <= 0 {
+                clear_reentrancy_guard(&env);
+                env.panic_with_error(ContractError::OraclePriceInvalid);
+            }
+
+            let now = env.ledger().timestamp();
+
+            if let Some(last_ts) = crate::storage::get_oracle_last_price_ts(&env) {
+                let age = now.saturating_sub(last_ts);
+                if age > cfg.max_age_seconds {
+                    clear_reentrancy_guard(&env);
+                    env.panic_with_error(ContractError::OraclePriceStale);
+                }
+
+                if let Some(last_price) = crate::storage::get_oracle_last_price(&env) {
+                    let deviation = compute_deviation_bps(price, last_price)
+                        .unwrap_or_else(|| {
+                            clear_reentrancy_guard(&env);
+                            env.panic_with_error(ContractError::OraclePriceInvalid)
+                        });
+                    if deviation > cfg.max_deviation_bps {
+                        clear_reentrancy_guard(&env);
+                        env.panic_with_error(ContractError::OraclePriceDeviation);
+                    }
+                }
+            }
+
+            crate::storage::set_oracle_last_price(&env, price, now);
+            publish_oracle_price_accepted_event(&env, price, now);
+        }
+
+        // Wire the auction contract settlement hook if configured.
+        if let Some(auction_addr) = crate::storage::get_auction_contract(&env) {
+            let auction_client = AuctionClient::new(&env, &auction_addr);
+            let auction_recovered = auction_client.settle_default_liquidation(
+                &settlement_id,
+                &env.current_contract_address(),
+                &borrower,
+            );
+            if auction_recovered != recovered_amount {
+                clear_reentrancy_guard(&env);
+                env.panic_with_error(ContractError::InvalidAmount);
+            }
+        }
+
+        lifecycle::settle_default_liquidation(env.clone(), borrower, recovered_amount, settlement_id);
+        clear_reentrancy_guard(&env);
+    }
+
+    // ── Auction contract admin ────────────────────────────────────────────────
+
+    /// Configure the auction contract address for default-liquidation hooks.
+    ///
+    /// When set, the credit contract records which auction contract is
+    /// authorized to participate in the liquidation settlement flow. This
+    /// address is stored in instance storage and can be updated by the admin.
+    ///
+    /// # Authorization
+    /// Admin only.
+    pub fn set_auction_contract(env: Env, auction_address: Address) {
+        assert_not_paused(&env);
+        require_admin_auth(&env);
+        crate::storage::set_auction_contract(&env, &auction_address);
+    }
+
+    /// Return the configured auction contract address, if set.
+    pub fn get_auction_contract(env: Env) -> Option<Address> {
+        crate::storage::get_auction_contract(&env)
+    }
+
+    // ── Oracle circuit-breaker admin ──────────────────────────────────────────
+
+    /// Configure the oracle price-feed circuit breaker thresholds.
+    ///
+    /// Once set, `settle_default_liquidation` requires a valid `oracle_price`
+    /// that is within `max_deviation_bps` of the last accepted price and whose
+    /// stored timestamp is no older than `max_age_seconds`.
+    ///
+    /// # Validation
+    /// - `max_deviation_bps` must be in `1..=10_000`.
+    /// - `max_age_seconds` must be > 0.
+    ///
+    /// # Authorization
+    /// Admin only.
+    pub fn set_oracle_config(env: Env, max_deviation_bps: u32, max_age_seconds: u64) {
+        assert_not_paused(&env);
+        require_admin_auth(&env);
+
+        if max_deviation_bps == 0 || max_deviation_bps > 10_000 {
+            env.panic_with_error(ContractError::InvalidAmount);
+        }
+        if max_age_seconds == 0 {
+            env.panic_with_error(ContractError::InvalidAmount);
+        }
+
+        set_oracle_config(&env, &OracleConfig { max_deviation_bps, max_age_seconds });
+        publish_oracle_config_set_event(&env, max_deviation_bps, max_age_seconds);
+    }
+
+    /// Return the current oracle circuit-breaker configuration, if set.
+    pub fn get_oracle_config(env: Env) -> Option<OracleConfig> {
+        get_oracle_config(&env)
     }
 
     // ── Borrower blocklist ────────────────────────────────────────────────────

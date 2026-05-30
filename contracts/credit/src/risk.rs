@@ -5,6 +5,12 @@
 #![warn(missing_docs)]
 
 use crate::auth::require_admin_auth;
+use crate::events::{publish_risk_parameters_updated, RiskParametersUpdatedEvent};
+use crate::storage::{
+    assert_not_paused, assert_ts_monotonic, rate_cfg_key, rate_formula_key,
+    set_borrower_rate_floor,
+};
+use crate::types::{ContractError, CreditLineData, CreditStatus, RateChangeConfig, RateFormulaConfig};
 use crate::events::publish_risk_parameters_updated;
 use crate::storage::{
     assert_not_paused, assert_ts_monotonic, persist_credit_line, rate_cfg_key, rate_formula_key,
@@ -86,6 +92,15 @@ pub fn set_rate_change_limits_legacy(env: Env, max_rate_change_bps: u32, rate_ch
         rate_change_min_interval,
     };
     env.storage().instance().set(&rate_cfg_key(&env), &cfg);
+}
+
+/// Set a per-borrower interest rate floor (admin only).
+pub fn set_borrower_rate_floor(env: Env, borrower: Address, floor_bps: Option<u32>) {
+    require_admin_auth(&env);
+    if let Some(floor) = floor_bps {
+        assert!(floor <= MAX_INTEREST_RATE_BPS, "floor exceeds max rate");
+    }
+    crate::storage::set_borrower_rate_floor(&env, &borrower, floor_bps);
 }
 
 /// Update risk parameters for an existing credit line (admin only).
@@ -190,6 +205,11 @@ pub fn update_risk_parameters(
     } else {
         interest_rate_bps
     };
+
+    // Apply per-borrower rate floor, if set.
+    if let Some(floor_bps) = crate::storage::get_borrower_rate_floor(&env, &borrower) {
+        effective_rate = effective_rate.max(floor_bps);
+    }
 
     if effective_rate > MAX_INTEREST_RATE_BPS {
         env.panic_with_error(ContractError::RateTooHigh);

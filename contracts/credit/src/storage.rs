@@ -35,12 +35,19 @@ pub enum DataKey {
     /// Per-borrower max utilization ratio cap in basis points (e.g. 8000 = 80%).
     /// When set, draw_credit enforces: utilized_amount <= credit_limit * cap_bps / 10_000.
     UtilizationCapBps(Address),
+    /// Per-borrower interest rate floor in basis points.
+    /// When set, the effective interest rate must be >= floor.
+    RateFloorBps(Address),
     /// Per-borrower installment schedule for delinquency tracking.
     RepaymentSchedule(Address),
     /// Minimum allowed credit limit for new credit lines (admin-configurable).
     MinCreditLimit,
     /// Maximum allowed credit limit for new credit lines (admin-configurable).
     MaxCreditLimit,
+    /// Address of the auction contract used for default-liquidation settlement hooks.
+    /// Admin-configurable via `set_auction_contract`. Optional: when absent the hook
+    /// is skipped and settlement proceeds as an accounting-only operation.
+    AuctionContract,
 }
 
 /// Maximum number of credit lines returned per page.
@@ -316,6 +323,23 @@ pub fn is_borrower_blocked(env: &Env, borrower: &Address) -> bool {
     }
 }
 
+/// Get the interest rate floor for a borrower, if set.
+pub fn get_borrower_rate_floor(env: &Env, borrower: &Address) -> Option<u32> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::RateFloorBps(borrower.clone()))
+}
+
+/// Set or clear the interest rate floor for a borrower.
+pub fn set_borrower_rate_floor(env: &Env, borrower: &Address, floor: Option<u32>) {
+    let key = DataKey::RateFloorBps(borrower.clone());
+    if let Some(floor) = floor {
+        env.storage().persistent().set(&key, &floor);
+    } else {
+        env.storage().persistent().remove(&key);
+    }
+}
+
 /// Get the configured minimum draw interval in seconds.
 pub fn get_draw_min_interval(env: &Env) -> Option<u64> {
     env.storage()
@@ -323,17 +347,39 @@ pub fn get_draw_min_interval(env: &Env) -> Option<u64> {
         .get(&DataKey::DrawMinIntervalSeconds)
 }
 
-/// Set or clear the configured minimum draw interval in seconds.
-pub fn set_draw_min_interval(env: &Env, interval_seconds: u64) {
-    if interval_seconds == 0 {
-        env.storage()
-            .instance()
-            .remove(&DataKey::DrawMinIntervalSeconds);
+/// Set the collateral token address (admin only).
+pub fn set_collateral_token(env: &Env, token: &Address) {
+    // Admin auth assumed by caller.
+    env.storage().instance().set(&DataKey::LiquidityToken, token);
+}
+
+// Get the collateral balance for a borrower (default 0).
+pub fn get_collateral_balance(env: &Env, borrower: &Address) -> i128 {
+    let key = DataKey::CollateralBalance(borrower.clone());
+    if env.storage().persistent().has(&key) {
+        bump_persistent_ttl(env, &key);
+        env.storage().persistent().get(&key).unwrap_or(0)
     } else {
-        env.storage()
-            .instance()
-            .set(&DataKey::DrawMinIntervalSeconds, &interval_seconds);
+        0
     }
+}
+
+// Set the collateral balance for a borrower (overwrites existing).
+pub fn set_collateral_balance(env: &Env, borrower: &Address, amount: i128) {
+    let key = DataKey::CollateralBalance(borrower.clone());
+    env.storage().persistent().set(&key, &amount);
+    bump_persistent_ttl(env, &key);
+}
+
+/// Get the minimum collateral ratio in basis points, if set.
+pub fn get_min_collateral_ratio_bps(env: &Env) -> Option<u32> {
+    env.storage().instance().get(&DataKey::MinCollateralRatioBps)
+}
+
+/// Set the minimum collateral ratio in basis points (admin only). Cap at 10000 bps.
+pub fn set_min_collateral_ratio_bps(env: &Env, ratio_bps: u32) {
+    assert!(ratio_bps <= 10_000, "ratio_bps must be <= 10000");
+    env.storage().instance().set(&DataKey::MinCollateralRatioBps, &ratio_bps);
 }
 
 /// Get the last successful draw timestamp for a borrower.
@@ -445,6 +491,22 @@ pub fn set_max_credit_limit(env: &Env, max: i128) {
     env.storage().instance().set(&DataKey::MaxCreditLimit, &max);
 }
 
+// ── Auction contract hook ─────────────────────────────────────────────────────
+
+/// Return the configured auction contract address, if set.
+///
+/// Used by `settle_default_liquidation` to validate cross-contract settlement
+/// hooks. When absent, the hook is skipped and settlement proceeds as an
+/// accounting-only operation.
+pub fn get_auction_contract(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&DataKey::AuctionContract)
+}
+
+/// Persist the auction contract address (admin only, enforced by caller).
+pub fn set_auction_contract(env: &Env, addr: &Address) {
+    env.storage().instance().set(&DataKey::AuctionContract, addr);
+}
+
 /// Return the installment schedule for a borrower, if configured.
 pub fn get_repayment_schedule(env: &Env, borrower: &Address) -> Option<RepaymentSchedule> {
     env.storage()
@@ -506,4 +568,32 @@ pub fn assert_ts_monotonic(env: &Env, stored_ts: u64, new_ts: u64) {
     if stored_ts != 0 && new_ts <= stored_ts {
         env.panic_with_error(crate::types::ContractError::TimestampRegression);
     }
+}
+
+// ── Oracle circuit-breaker storage ───────────────────────────────────────────
+
+/// Get the oracle circuit-breaker config, if set.
+pub fn get_oracle_config(env: &Env) -> Option<crate::types::OracleConfig> {
+    env.storage().instance().get(&DataKey::OracleConfig)
+}
+
+/// Set the oracle circuit-breaker config.
+pub fn set_oracle_config(env: &Env, cfg: &crate::types::OracleConfig) {
+    env.storage().instance().set(&DataKey::OracleConfig, cfg);
+}
+
+/// Get the last accepted oracle price, if any.
+pub fn get_oracle_last_price(env: &Env) -> Option<i128> {
+    env.storage().instance().get(&DataKey::OracleLastPrice)
+}
+
+/// Get the timestamp of the last accepted oracle price, if any.
+pub fn get_oracle_last_price_ts(env: &Env) -> Option<u64> {
+    env.storage().instance().get(&DataKey::OracleLastPriceTs)
+}
+
+/// Persist a newly accepted oracle price and its timestamp.
+pub fn set_oracle_last_price(env: &Env, price: i128, ts: u64) {
+    env.storage().instance().set(&DataKey::OracleLastPrice, &price);
+    env.storage().instance().set(&DataKey::OracleLastPriceTs, &ts);
 }

@@ -244,6 +244,25 @@ pub enum GraceWaiverMode {
     ReducedRate = 1,
 }
 
+/// Oracle circuit-breaker configuration.
+///
+/// When set, `settle_default_liquidation` validates the supplied `oracle_price`
+/// against the last accepted price and the current ledger timestamp before
+/// applying the settlement.
+///
+/// # Invariants
+/// - `max_deviation_bps` must be in `1..=10_000` (0.01 % – 100 %).
+/// - `max_age_seconds` must be > 0.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OracleConfig {
+    /// Maximum allowed price deviation from the last accepted price, in basis points.
+    /// E.g. 500 = 5 %.
+    pub max_deviation_bps: u32,
+    /// Maximum age of an oracle price in seconds before it is considered stale.
+    pub max_age_seconds: u64,
+}
+
 /// Event emitted when the rate formula config is set or cleared.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -252,8 +271,6 @@ pub struct RateFormulaConfigEvent {
     pub enabled: bool,
 }
 
-<<<<<<< HEAD
-=======
 /// Global protocol configuration.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProtocolConfig {
@@ -262,4 +279,3 @@ pub struct ProtocolConfig {
     /// Configured liquidity source.
     pub liquidity_source: Option<Address>,
 }
->>>>>>> upstream/main
