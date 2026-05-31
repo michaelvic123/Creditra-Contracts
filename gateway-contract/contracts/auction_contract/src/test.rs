@@ -1474,3 +1474,4 @@ mod tests {
         assert_eq!(stored.highest_bid, 200_i128);
     }
 }
+

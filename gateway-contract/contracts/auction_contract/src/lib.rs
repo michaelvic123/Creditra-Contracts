@@ -201,7 +201,9 @@ impl Auction {
             panic!("auction not open");
         }
 
-        if env.ledger().timestamp() >= state.config.end_time {
+        let now = env.ledger().timestamp();
+        
+        if now >= state.config.end_time {
             panic!("auction closed");
         }
 
