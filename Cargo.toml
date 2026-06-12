@@ -18,11 +18,19 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)', 'cfg(coverage_
 soroban-sdk = "22"
 
 [profile.release]
+# Optimise for size — Soroban charges by deployed WASM bytes.
 opt-level = "z"
+# Keep arithmetic checked even in release: contracts trade gas for safety.
 overflow-checks = true
+# No debuginfo in the deployed binary.
 debug = 0
+# Strip symbol names to further shrink the WASM payload.
 strip = "symbols"
+# Disable extra `debug_assert!` checks; contracts use explicit guards.
 debug-assertions = false
+# Soroban does not provide an unwinder — panics must abort.
 panic = "abort"
+# Single codegen unit produces a smaller, more aggressively inlined binary.
 codegen-units = 1
+# Full link-time optimisation across crates for maximum size win.
 lto = true
