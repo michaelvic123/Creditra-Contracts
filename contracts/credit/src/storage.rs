@@ -542,18 +542,38 @@ pub fn assert_ts_monotonic(env: &Env, stored_ts: u64, new_ts: u64) {
 }
 
 // ── Oracle circuit-breaker storage ───────────────────────────────────────────
+//
+// The oracle circuit breaker has three independent storage entries:
+//
+//   OracleConfig         — admin-supplied policy (deviation & staleness limits)
+//   OracleLastPrice      — last price that passed the breaker
+//   OracleLastPriceTs    — ledger timestamp of that price
+//
+// `set_oracle_last_price` updates the two `Last*` entries atomically; readers
+// should always treat them as a pair to avoid races against an in-flight
+// settlement.
 
 /// Get the oracle circuit-breaker config, if set.
+///
+/// When `None`, the breaker is disabled and oracle prices are accepted with
+/// no deviation or staleness check. See [`crate::types::OracleConfig`] for
+/// invariants on the stored values.
 pub fn get_oracle_config(env: &Env) -> Option<crate::types::OracleConfig> {
     env.storage().instance().get(&DataKey::OracleConfig)
 }
 
 /// Set the oracle circuit-breaker config.
+///
+/// Caller is responsible for admin auth and for validating that the supplied
+/// config satisfies the invariants documented on [`crate::types::OracleConfig`].
 pub fn set_oracle_config(env: &Env, cfg: &crate::types::OracleConfig) {
     env.storage().instance().set(&DataKey::OracleConfig, cfg);
 }
 
 /// Get the last accepted oracle price, if any.
+///
+/// Returns `None` before the first successful settlement. Always read
+/// together with [`get_oracle_last_price_ts`] to interpret staleness.
 pub fn get_oracle_last_price(env: &Env) -> Option<i128> {
     env.storage().instance().get(&DataKey::OracleLastPrice)
 }
@@ -563,7 +583,10 @@ pub fn get_oracle_last_price_ts(env: &Env) -> Option<u64> {
     env.storage().instance().get(&DataKey::OracleLastPriceTs)
 }
 
-/// Persist a newly accepted oracle price and its timestamp.
+/// Persist a newly accepted oracle price and its timestamp atomically.
+///
+/// The two `instance().set(..)` calls are part of the same host transaction,
+/// so observers cannot see a half-updated price/timestamp pair.
 pub fn set_oracle_last_price(env: &Env, price: i128, ts: u64) {
     env.storage().instance().set(&DataKey::OracleLastPrice, &price);
     env.storage().instance().set(&DataKey::OracleLastPriceTs, &ts);
